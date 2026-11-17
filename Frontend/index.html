@@ -1,31 +1,217 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>J.A.R.V.I.S</title>
-<link rel="stylesheet" href="style.css">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI Offline Emergency & Crowd Radar</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', sans-serif; }
+    body { background: #0a0e17; color: #e2e8f0; display: flex; flex-direction: column; align-items: center; padding: 20px; min-height: 100vh; }
+    h1 { font-size: 1.4rem; color: #38bdf8; margin-bottom: 6px; text-align: center; }
+    p.sub { font-size: 0.85rem; color: #94a3b8; margin-bottom: 20px; text-align: center; }
+    
+    /* Radar Screen */
+    .radar {
+      width: 260px; height: 260px; border-radius: 50%;
+      border: 2px solid #0284c7; position: relative;
+      background: radial-gradient(circle, rgba(2,132,199,0.15) 0%, rgba(10,14,23,1) 70%);
+      box-shadow: 0 0 25px rgba(56, 189, 248, 0.2);
+      margin-bottom: 20px; overflow: hidden;
+    }
+    .radar::before, .radar::after {
+      content: ''; position: absolute; border: 1px dashed rgba(56, 189, 248, 0.3);
+      border-radius: 50%; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    }
+    .radar::before { width: 170px; height: 170px; }
+    .radar::after { width: 85px; height: 85px; }
+    .sweep {
+      position: absolute; width: 50%; height: 50%; top: 0; left: 50%;
+      background: linear-gradient(45deg, rgba(56, 189, 248, 0.5), transparent);
+      transform-origin: bottom left; animation: spin 3s linear infinite;
+    }
+    @keyframes spin { 100% { transform: rotate(360deg); } }
+
+    .target-dot {
+      position: absolute; width: 14px; height: 14px; background: #22c55e;
+      border-radius: 50%; top: 50%; left: 50%; transform: translate(-50%, -50%);
+      box-shadow: 0 0 12px #22c55e; transition: all 0.3s ease; display: none;
+    }
+
+    /* Controls & Cards */
+    .controls { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; margin-bottom: 18px; }
+    button {
+      background: #0284c7; color: #fff; border: none; padding: 10px 16px;
+      border-radius: 8px; font-weight: 600; cursor: pointer; font-size: 0.9rem;
+    }
+    button:hover { background: #0369a1; }
+    button.danger { background: #dc2626; }
+    button.sim { background: #7c3aed; }
+
+    .panel {
+      width: 100%; max-width: 400px; background: #111827; border: 1px solid #1e293b;
+      border-radius: 12px; padding: 16px; margin-bottom: 14px;
+    }
+    .stat-row { display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 0.95rem; }
+    .val { font-weight: bold; color: #38bdf8; }
+    .alert-box {
+      padding: 10px; border-radius: 8px; text-align: center; font-weight: bold;
+      background: #1e293b; color: #94a3b8; margin-top: 8px;
+    }
+    .alert-danger { background: rgba(220, 38, 38, 0.25); color: #f87171; border: 1px solid #ef4444; }
+    .alert-safe { background: rgba(34, 197, 94, 0.2); color: #4ade80; border: 1px solid #22c55e; }
+  </style>
 </head>
 <body>
- <header><h1>J.A.R.V.I.S</h1><p>MOBILE EDITION</p></header>
- <div class="core">
- <div class="ring r1"></div>
- <div class="ring r2"></div>
- <div class="center"></div>
- </div>
- <p class="core-text">CORE ACTIVE</p>
- <div class="status">
- <h2>SYSTEM STATUS</h2>
- <div class="row"><span>AI CORE</span><b class="on">● ONLINE</b></div>
- <div class="row"><span>NETWORK</span><b class="on">● ONLINE</b></div>
- <div class="row"><span>VOICE</span><b class="off">○ LOCKED</b></div>
- <div class="row"><span>MEMORY</span><b class="off">○ LOCKED</b></div>
- </div>
- <div class="chat" id="chat"></div>
- <div class="input-area">
- <input id="msg" placeholder="Ask J.A.R.V.I.S...">
- <button id="send">SEND</button>
- </div>
- <script src="script.js"></script>
+
+  <h1>AI Offline Emergency & Crowd Radar</h1>
+  <p class="sub">RF Signal (BLE RSSI) Distance & Proximity Engine</p>
+
+  <div class="radar">
+    <div class="sweep"></div>
+    <div class="target-dot" id="targetDot"></div>
+  </div>
+
+  <div class="controls">
+    <button onclick="scanRealBLE()">Scan Real Bluetooth</button>
+    <button class="sim" onclick="toggleSimulation()">Demo Simulation</button>
+    <button class="danger" onclick="stopAll()">Stop</button>
+  </div>
+
+  <div class="panel">
+    <div class="stat-row"><span>Mode:</span> <span class="val" id="modeText">Idle</span></div>
+    <div class="stat-row"><span>Raw RSSI:</span> <span class="val" id="rawRssi">-- dBm</span></div>
+    <div class="stat-row"><span>AI Filtered RSSI:</span> <span class="val" id="filteredRssi">-- dBm</span></div>
+    <div class="stat-row"><span>Estimated Distance:</span> <span class="val" id="distanceVal">-- m</span></div>
+    <div class="stat-row">
+      <span>Safe Geo-Fence Limit:</span>
+      <select id="limitSelect" style="background:#1e293b;color:#fff;border:none;padding:3px 6px;border-radius:4px;">
+        <option value="3">3 Meters (Child/Bag)</option>
+        <option value="5" selected>5 Meters (Standard)</option>
+        <option value="15">15 Meters (Rescue Range)</option>
+      </select>
+    </div>
+    <div class="alert-box" id="statusBox">Waiting for signal...</div>
+  </div>
+
+  <script>
+    // 1D Kalman Filter for smoothing noisy RF signals
+    class KalmanFilter {
+      constructor(R = 0.08, Q = 1.5) {
+        this.R = R; // Measurement noise
+        this.Q = Q; // Process noise
+        this.x = null; // Estimated signal
+        this.p = 1;    // Estimation error covariance
+      }
+      filter(z) {
+        if (this.x === null) {
+          this.x = z;
+          return z;
+        }
+        this.p = this.p + this.Q;
+        const k = this.p / (this.p + this.R);
+        this.x = this.x + k * (z - this.x);
+        this.p = (1 - k) * this.p;
+        return this.x;
+      }
+    }
+
+    const kf = new KalmanFilter();
+    let simInterval = null;
+    let lastSpoken = 0;
+
+    // Log-Distance Path Loss Model: d = 10 ^ ((TxPower - RSSI) / (10 * n))
+    function rssiToDistance(rssi, txPower = -59, n = 2.4) {
+      return Math.pow(10, (txPower - rssi) / (10 * n));
+    }
+
+    function speakAlert(text) {
+      const now = Date.now();
+      if (now - lastSpoken > 4000 && 'speechSynthesis' in window) {
+        const msg = new SpeechSynthesisUtterance(text);
+        window.speechSynthesis.speak(msg);
+        lastSpoken = now;
+      }
+    }
+
+    function updateRadarUI(rawRssi) {
+      const smoothRssi = kf.filter(rawRssi);
+      const distance = rssiToDistance(smoothRssi);
+      const maxLimit = parseFloat(document.getElementById('limitSelect').value);
+
+      document.getElementById('rawRssi').innerText = `${rawRssi.toFixed(1)} dBm`;
+      document.getElementById('filteredRssi').innerText = `${smoothRssi.toFixed(1)} dBm`;
+      document.getElementById('distanceVal').innerText = `${distance.toFixed(2)} m`;
+
+      // Update dot position on radar
+      const dot = document.getElementById('targetDot');
+      dot.style.display = 'block';
+      const clampedDist = Math.min(distance, 20);
+      const radiusPx = (clampedDist / 20) * 115;
+      const angle = (Date.now() / 1000) % (2 * Math.PI);
+      dot.style.left = `${130 + radiusPx * Math.cos(angle)}px`;
+      dot.style.top = `${130 + radiusPx * Math.sin(angle)}px`;
+
+      const statusBox = document.getElementById('statusBox');
+      if (distance > maxLimit) {
+        statusBox.className = 'alert-box alert-danger';
+        statusBox.innerText = `ALERT: Target moved beyond ${maxLimit}m! (${distance.toFixed(1)}m)`;
+        dot.style.background = '#ef4444';
+        dot.style.boxShadow = '0 0 12px #ef4444';
+        speakAlert(`Warning. Target distance is ${Math.round(distance)} meters.`);
+      } else {
+        statusBox.className = 'alert-box alert-safe';
+        statusBox.innerText = `SAFE: Target within range (${distance.toFixed(1)}m)`;
+        dot.style.background = '#22c55e';
+        dot.style.boxShadow = '0 0 12px #22c55e';
+      }
+    }
+
+    // Real Web Bluetooth API Scanner (Requires HTTPS or localhost on Chrome Android)
+    async function scanRealBLE() {
+      stopAll();
+      if (!navigator.bluetooth) {
+        alert("Web Bluetooth is not supported in this browser. Try Chrome on Android or use Demo Simulation.");
+        return;
+      }
+      try {
+        document.getElementById('modeText').innerText = "Scanning Real BLE...";
+        const device = await navigator.bluetooth.requestDevice({ acceptAllDevices: true });
+        document.getElementById('modeText').innerText = `Tracking: ${device.name || 'Unknown Device'}`;
+        
+        if (device.watchAdvertisements) {
+          device.addEventListener('advertisementreceived', (event) => {
+            updateRadarUI(event.rssi);
+          });
+          await device.watchAdvertisements();
+        } else {
+          alert("Device selected! Enable 'Experimental Web Platform features' in chrome://flags for live RSSI streaming.");
+        }
+      } catch (err) {
+        document.getElementById('modeText').innerText = "Scan Cancelled";
+      }
+    }
+
+    // Demo Simulation Mode (Simulates a target walking away & returning)
+    function toggleSimulation() {
+      stopAll();
+      document.getElementById('modeText').innerText = "Live RF Simulation";
+      let step = 0;
+      simInterval = setInterval(() => {
+        step += 0.15;
+        // Simulate RSSI oscillating between -52 dBm (close) and -82 dBm (far) with random noise
+        const baseRssi = -67 + Math.sin(step) * 14;
+        const noise = (Math.random() - 0.5) * 4;
+        updateRadarUI(baseRssi + noise);
+      }, 500);
+    }
+
+    function stopAll() {
+      if (simInterval) clearInterval(simInterval);
+      simInterval = null;
+      kf.x = null;
+      document.getElementById('modeText').innerText = "Idle";
+      document.getElementById('targetDot').style.display = 'none';
+    }
+  </script>
 </body>
 </html>
